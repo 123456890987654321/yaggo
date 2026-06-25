@@ -3,7 +3,7 @@ package gen
 import (
 	"testing"
 
-	"github.com/123456890987654321/yago/internal/spec"
+	"github.com/123456890987654321/yaggo/internal/spec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,22 +64,22 @@ func TestSchemaToGoType(t *testing.T) {
 		{"nil schema", nil, false, "any"},
 		{"ref required", &spec.Schema{Ref: "#/components/schemas/Pet"}, false, "Pet"},
 		{"ref optional", &spec.Schema{Ref: "#/components/schemas/Pet"}, true, "*Pet"},
-		{"string required", &spec.Schema{Type: "string"}, false, "string"},
-		{"string optional", &spec.Schema{Type: "string"}, true, "*string"},
-		{"integer default", &spec.Schema{Type: "integer"}, false, "int"},
-		{"integer int32", &spec.Schema{Type: "integer", Format: "int32"}, false, "int32"},
-		{"integer int64", &spec.Schema{Type: "integer", Format: "int64"}, false, "int64"},
-		{"integer optional", &spec.Schema{Type: "integer", Format: "int64"}, true, "*int64"},
-		{"number default", &spec.Schema{Type: "number"}, false, "float64"},
-		{"number float", &spec.Schema{Type: "number", Format: "float"}, false, "float32"},
-		{"number optional", &spec.Schema{Type: "number"}, true, "*float64"},
-		{"boolean required", &spec.Schema{Type: "boolean"}, false, "bool"},
-		{"boolean optional", &spec.Schema{Type: "boolean"}, true, "*bool"},
-		{"array no items", &spec.Schema{Type: "array"}, false, "[]any"},
-		{"array of string", &spec.Schema{Type: "array", Items: &spec.Schema{Type: "string"}}, false, "[]string"},
-		{"object no addl", &spec.Schema{Type: "object"}, false, "map[string]any"},
-		{"object with addl", &spec.Schema{Type: "object", AdditionalProperties: &spec.Schema{Type: "string"}}, false, "map[string]string"},
-		{"unknown type", &spec.Schema{Type: "garbage"}, false, "any"},
+		{"string required", &spec.Schema{Type: spec.SchemaType{"string"}}, false, "string"},
+		{"string optional", &spec.Schema{Type: spec.SchemaType{"string"}}, true, "*string"},
+		{"integer default", &spec.Schema{Type: spec.SchemaType{"integer"}}, false, "int"},
+		{"integer int32", &spec.Schema{Type: spec.SchemaType{"integer"}, Format: "int32"}, false, "int32"},
+		{"integer int64", &spec.Schema{Type: spec.SchemaType{"integer"}, Format: "int64"}, false, "int64"},
+		{"integer optional", &spec.Schema{Type: spec.SchemaType{"integer"}, Format: "int64"}, true, "*int64"},
+		{"number default", &spec.Schema{Type: spec.SchemaType{"number"}}, false, "float64"},
+		{"number float", &spec.Schema{Type: spec.SchemaType{"number"}, Format: "float"}, false, "float32"},
+		{"number optional", &spec.Schema{Type: spec.SchemaType{"number"}}, true, "*float64"},
+		{"boolean required", &spec.Schema{Type: spec.SchemaType{"boolean"}}, false, "bool"},
+		{"boolean optional", &spec.Schema{Type: spec.SchemaType{"boolean"}}, true, "*bool"},
+		{"array no items", &spec.Schema{Type: spec.SchemaType{"array"}}, false, "[]any"},
+		{"array of string", &spec.Schema{Type: spec.SchemaType{"array"}, Items: &spec.Schema{Type: spec.SchemaType{"string"}}}, false, "[]string"},
+		{"object no addl", &spec.Schema{Type: spec.SchemaType{"object"}}, false, "map[string]any"},
+		{"object with addl", &spec.Schema{Type: spec.SchemaType{"object"}, AdditionalProperties: spec.AdditionalProperties{Schema: &spec.Schema{Type: spec.SchemaType{"string"}}, Set: true, Allowed: true}}, false, "map[string]string"},
+		{"unknown type", &spec.Schema{Type: spec.SchemaType{"garbage"}}, false, "any"},
 		{"empty type", &spec.Schema{}, false, "any"},
 	}
 	for _, tc := range tests {
@@ -139,7 +139,7 @@ func TestCollectOps(t *testing.T) {
 	require.Equal(t, "/b", ops[2].Path)
 }
 
-func TestPathAndQueryParams(t *testing.T) {
+func TestParamsByLocation(t *testing.T) {
 	op := &spec.Operation{
 		Parameters: []spec.Parameter{
 			{Name: "id", In: "path"},
@@ -147,32 +147,109 @@ func TestPathAndQueryParams(t *testing.T) {
 			{Name: "x", In: "header"},
 		},
 	}
-	pps := pathParams(op)
+	pps := paramsByLocation(op, paramInPath)
 	require.Len(t, pps, 1)
 	require.Equal(t, "id", pps[0].Name)
-	qps := queryParams(op)
+
+	qps := paramsByLocation(op, paramInQuery)
 	require.Len(t, qps, 1)
 	require.Equal(t, "q", qps[0].Name)
+
+	hps := paramsByLocation(op, paramInHeader)
+	require.Len(t, hps, 1)
+	require.Equal(t, "x", hps[0].Name)
+
+	// Unknown locations (e.g. "cookie") yield an empty slice, not an error.
+	require.Empty(t, paramsByLocation(op, "cookie"))
 }
 
-func TestRequestBodySchema(t *testing.T) {
-	require.Nil(t, requestBodySchema(&spec.Operation{}))
-
-	noJSON := &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-		"application/xml": {Schema: &spec.Schema{Type: "string"}},
-	}}}
-	require.Nil(t, requestBodySchema(noJSON))
-
-	withJSON := &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-		"application/json": {Schema: &spec.Schema{Type: "object"}},
-	}}}
-	require.NotNil(t, requestBodySchema(withJSON))
+func TestIsJSONCompatible(t *testing.T) {
+	tests := map[string]bool{
+		"application/json":                        true,
+		"application/vnd.api+json":                true,
+		"application/hal+json":                    true,
+		"application/problem+json":                true,
+		"application/json; charset=utf-8":         true, // params after ";" are ignored
+		"application/vnd.foo+json; charset=utf-8": true,
+		"application/xml":                         false,
+		"text/plain":                              false,
+		"multipart/form-data":                     false,
+		"application/x-www-form-urlencoded":       false,
+		"":                                        false,
+	}
+	for ct, want := range tests {
+		require.Equalf(t, want, isJSONCompatible(ct), "isJSONCompatible(%q)", ct)
+	}
 }
 
-func TestSuccessResponseSchema(t *testing.T) {
+func TestRequestBodyContent(t *testing.T) {
 	tests := []struct {
 		name    string
 		op      *spec.Operation
+		wantCT  string
+		wantNil bool
+	}{
+		{
+			name:    "no request body",
+			op:      &spec.Operation{},
+			wantNil: true,
+		},
+		{
+			name: "non-JSON content type only",
+			op: &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+				"application/xml": {Schema: &spec.Schema{Type: spec.SchemaType{"string"}}},
+			}}},
+			wantNil: true,
+		},
+		{
+			name: "plain application/json",
+			op: &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+				"application/json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}},
+			}}},
+			wantCT: "application/json",
+		},
+		{
+			name: "vnd.api+json fallback when no plain json",
+			op: &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+				"application/vnd.api+json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}},
+			}}},
+			wantCT: "application/vnd.api+json",
+		},
+		{
+			name: "exact application/json wins over +json variants",
+			op: &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+				"application/vnd.api+json": {Schema: &spec.Schema{Type: spec.SchemaType{"string"}}},
+				"application/json":         {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}},
+			}}},
+			wantCT: "application/json",
+		},
+		{
+			name: "two +json variants -> alphabetic first",
+			op: &spec.Operation{RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+				"application/vnd.api+json": {Schema: &spec.Schema{}},
+				"application/hal+json":     {Schema: &spec.Schema{}},
+			}}},
+			wantCT: "application/hal+json", // alphabetic in sortedKeys
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ct, bs := requestBodyContent(tc.op)
+			require.Equal(t, tc.wantCT, ct)
+			if tc.wantNil {
+				require.Nil(t, bs)
+			} else {
+				require.NotNil(t, bs)
+			}
+		})
+	}
+}
+
+func TestSuccessResponseContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		op      *spec.Operation
+		wantCT  string
 		wantNil bool
 	}{
 		{
@@ -188,38 +265,42 @@ func TestSuccessResponseSchema(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name: "200 with no JSON content",
+			name: "200 with non-JSON content",
 			op: &spec.Operation{Responses: map[string]spec.Response{
 				"200": {Content: map[string]spec.MediaType{"text/plain": {Schema: &spec.Schema{}}}},
 			}},
 			wantNil: true,
 		},
 		{
-			name: "200 with JSON content",
+			name: "200 application/json",
 			op: &spec.Operation{Responses: map[string]spec.Response{
-				"200": {Content: map[string]spec.MediaType{"application/json": {Schema: &spec.Schema{Type: "object"}}}},
+				"200": {Content: map[string]spec.MediaType{"application/json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}}}},
 			}},
+			wantCT: "application/json",
 		},
 		{
-			name: "201 only",
+			name: "200 problem+json (RFC 7807)",
 			op: &spec.Operation{Responses: map[string]spec.Response{
-				"201": {Content: map[string]spec.MediaType{"application/json": {Schema: &spec.Schema{Type: "object"}}}},
+				"200": {Content: map[string]spec.MediaType{"application/problem+json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}}}},
 			}},
+			wantCT: "application/problem+json",
 		},
 		{
-			name: "202 only",
+			name: "200 missing; 201 has JSON",
 			op: &spec.Operation{Responses: map[string]spec.Response{
-				"202": {Content: map[string]spec.MediaType{"application/json": {Schema: &spec.Schema{Type: "object"}}}},
+				"201": {Content: map[string]spec.MediaType{"application/json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}}}}},
 			}},
+			wantCT: "application/json",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := successResponseSchema(tc.op)
+			ct, bs := successResponseContent(tc.op)
+			require.Equal(t, tc.wantCT, ct)
 			if tc.wantNil {
-				require.Nil(t, got)
+				require.Nil(t, bs)
 			} else {
-				require.NotNil(t, got)
+				require.NotNil(t, bs)
 			}
 		})
 	}
@@ -229,24 +310,72 @@ func TestMergeAllOf(t *testing.T) {
 	api := &spec.OpenAPI{
 		Components: spec.Components{Schemas: map[string]*spec.Schema{
 			"Base": {
-				Type:       "object",
+				Type:       spec.SchemaType{"object"},
 				Required:   []string{"id"},
-				Properties: map[string]*spec.Schema{"id": {Type: "integer"}},
+				Properties: map[string]*spec.Schema{"id": {Type: spec.SchemaType{"integer"}}},
 			},
 		}},
 	}
 	schemas := []*spec.Schema{
 		{Ref: "#/components/schemas/Base"},
-		{Type: "object", Required: []string{"name"}, Properties: map[string]*spec.Schema{"name": {Type: "string"}}},
+		{Type: spec.SchemaType{"object"}, Required: []string{"name"}, Properties: map[string]*spec.Schema{"name": {Type: spec.SchemaType{"string"}}}},
 		{Ref: "#/components/schemas/Missing"}, // unresolvable, skipped
 	}
 	merged := mergeAllOf(schemas, api)
-	require.Equal(t, "object", merged.Type)
+	require.Equal(t, "object", merged.Type.Primary())
 	require.Contains(t, merged.Properties, "id")
 	require.Contains(t, merged.Properties, "name")
 	require.ElementsMatch(t, []string{"id", "name"}, merged.Required)
 }
 
 func TestHttpMethodsConst(t *testing.T) {
-	require.Equal(t, []string{"GET", "POST", "PUT", "PATCH", "DELETE"}, httpMethods)
+	require.Equal(t, []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "TRACE"}, httpMethods)
+}
+
+// TestSchemaToGoType_OAS31Nullable verifies that 3.1's type:["X","null"] form
+// produces pointer types (matching 3.0's nullable:true behaviour) regardless
+// of whether the field is marked required.
+func TestSchemaToGoType_OAS31Nullable(t *testing.T) {
+	tests := []struct {
+		name     string
+		schema   *spec.Schema
+		optional bool
+		want     string
+	}{
+		{
+			name:     "type array with null forces pointer (required)",
+			schema:   &spec.Schema{Type: spec.SchemaType{"string", "null"}},
+			optional: false,
+			want:     "*string",
+		},
+		{
+			name:     "type array with null still pointer (optional)",
+			schema:   &spec.Schema{Type: spec.SchemaType{"integer", "null"}, Format: "int64"},
+			optional: true,
+			want:     "*int64",
+		},
+		{
+			name:     "3.0 nullable:true forces pointer",
+			schema:   &spec.Schema{Type: spec.SchemaType{"boolean"}, Nullable: true},
+			optional: false,
+			want:     "*bool",
+		},
+		{
+			name:     "non-nullable required scalar stays value type",
+			schema:   &spec.Schema{Type: spec.SchemaType{"number"}},
+			optional: false,
+			want:     "float64",
+		},
+		{
+			name:     "ref + nullable type array produces pointer",
+			schema:   &spec.Schema{Ref: "#/components/schemas/Pet", Type: spec.SchemaType{"null"}},
+			optional: false,
+			want:     "*Pet",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, schemaToGoType(tc.schema, tc.optional))
+		})
+	}
 }

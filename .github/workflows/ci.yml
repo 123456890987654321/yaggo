@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported (go.mod directive) and latest stable.
+        go: ["1.23", "stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal)"
+      - name: go vet
+        run: go vet ./...
+      - name: go test (with race)
+        run: go test -race ./...
+      - name: examples module builds
+        run: cd examples && go vet ./... && go build ./...
+      - name: generated petstore is in sync with templates
+        run: |
+          go run ./cmd/yaggo -spec examples/petstore.yaml -out /tmp/sync -package petstore
+          for f in types server client auth; do
+            diff -u "examples/petstore/$f.go" "/tmp/sync/$f.go"
+          done
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

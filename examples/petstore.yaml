@@ -1,7 +1,11 @@
-openapi: "3.0.3"
+openapi: "3.1.1"
 info:
   title: Petstore
+  summary: A tiny pet store API used to exercise yaggo end-to-end.
   version: "1.0"
+  license:
+    name: MIT
+    identifier: MIT
 
 paths:
   /pets:
@@ -102,6 +106,20 @@ paths:
           description: No content
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT issued by the petstore auth service.
+    BasicAuth:
+      type: http
+      scheme: basic
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
   schemas:
     PetStatus:
       type: string
@@ -119,7 +137,9 @@ components:
           type: string
           description: Name of the pet
         tag:
-          type: string
+          # 3.1 nullable form: type as an array including "null".
+          # The generator produces *string for this regardless of "required".
+          type: [string, "null"]
           description: Optional tag
         status:
           $ref: '#/components/schemas/PetStatus'
