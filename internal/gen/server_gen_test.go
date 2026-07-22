@@ -627,7 +627,7 @@ func TestGenerateServer_OptionalBodySkipsValidateOnEmptyBody(t *testing.T) {
 				Required: false,
 				Content: map[string]spec.MediaType{
 					"application/json": {Schema: &spec.Schema{
-						Type: spec.SchemaType{"object"},
+						Type:     spec.SchemaType{"object"},
 						Required: []string{"name"},
 						Properties: map[string]*spec.Schema{
 							"name": {Type: spec.SchemaType{"string"}},

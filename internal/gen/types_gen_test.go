@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"go/format"
+	"io"
 	"math"
 	"strings"
 	"testing"
@@ -579,6 +580,55 @@ func TestSecurity_ParameterNameInjectionRejected(t *testing.T) {
 	err := GenerateServer(&bytes.Buffer{}, api, "p")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not produce a valid Go identifier")
+}
+
+// TestSecurity_InlineBodyPropertyNameInjectionRejected: inline request-body
+// object properties are emitted as struct fields AND as raw values inside
+// Validate() error strings ("field '<name>' is required") by
+// bodytypes_gen.go → writeStruct. These names sit OUTSIDE components/schemas,
+// so the component-property loop in validateSpecIdentifiers never saw them.
+// A crafted name breaks the field declaration (so go/format rejects the file)
+// but the unformatted bytes were still written to disk for debugging — the
+// exact "arbitrary bytes in the developer's workspace" foothold validateGoIdent
+// exists to close. Every Generate* entry point must reject it before writing.
+func TestSecurity_InlineBodyPropertyNameInjectionRejected(t *testing.T) {
+	newAPI := func() *spec.OpenAPI {
+		return &spec.OpenAPI{Paths: map[string]spec.PathItem{
+			"/foo": {Post: &spec.Operation{
+				OperationID: "doFoo",
+				RequestBody: &spec.RequestBody{
+					Required: true,
+					Content: map[string]spec.MediaType{
+						"application/json": {Schema: &spec.Schema{
+							Type:     spec.SchemaType{"object"},
+							Required: []string{`x"); DoEvil(); _ = fmt.Errorf("y`},
+							Properties: map[string]*spec.Schema{
+								`x"); DoEvil(); _ = fmt.Errorf("y`: {Type: spec.SchemaType{"string"}},
+							},
+						}},
+					},
+				},
+				Responses: map[string]spec.Response{"200": {}},
+			}},
+		}}
+	}
+	// GenerateBodyTypes is the one that actually emits the struct, but every
+	// Generate* front-loads validateSpecIdentifiers, so all must reject.
+	for _, tc := range []struct {
+		name string
+		gen  func(io.Writer, *spec.OpenAPI, string) error
+	}{
+		{"types", GenerateTypes},
+		{"bodytypes", GenerateBodyTypes},
+		{"server", GenerateServer},
+		{"client", GenerateClient},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.gen(&bytes.Buffer{}, newAPI(), "p")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "does not produce a valid Go identifier")
+		})
+	}
 }
 
 // TestSecurity_DanglingRefInPropertyRejected: a $ref to a non-existent

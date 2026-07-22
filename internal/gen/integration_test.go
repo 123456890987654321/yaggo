@@ -35,7 +35,7 @@ func TestGeneratedPetstoreCompilesAndOptionsWork(t *testing.T) {
 	if err != nil {
 		t.Skip("skipping: module proxy not reachable:", err)
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	petstoreYAML, err := filepath.Abs(filepath.Join("..", "..", "examples", "petstore.yaml"))
 	require.NoError(t, err)

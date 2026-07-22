@@ -330,6 +330,35 @@ func validateSpecIdentifiers(api *spec.OpenAPI) error {
 			}
 		}
 	}
+	// Inline request-body property names surface as struct field identifiers
+	// AND as raw values inside Validate() error strings ("field '<name>' is
+	// required") via bodytypes_gen.go → writeStruct. Unlike component-schema
+	// properties (validated in the loop above), inline body properties were
+	// otherwise ungated: a crafted name would produce a malformed field
+	// declaration that go/format rejects, but the unformatted bytes still land
+	// on disk. Validate them here so the "no unvalidated spec string reaches
+	// generated source" invariant holds for inline bodies too. Mirror
+	// bodytypes_gen exactly: only the JSON-compatible body schema is emitted,
+	// and only when it's inline (a $ref reuses an already-validated component).
+	for _, mo := range collectOps(api) {
+		_, bs := requestBodyContent(mo.Op)
+		if bs == nil || bs.Ref != "" {
+			continue
+		}
+		origin := fmt.Sprintf("operation %s %s requestBody", mo.Method, mo.Path)
+		eff := effectiveSchema(bs, api)
+		seenBodyFields := make(map[string]string, len(eff.Properties))
+		for prop := range eff.Properties {
+			field := toGoFieldName(prop)
+			if err := validateGoIdent(fmt.Sprintf("%s property %q", origin, prop), field); err != nil {
+				return err
+			}
+			if prev, dup := seenBodyFields[field]; dup {
+				return fmt.Errorf("%s: properties %q and %q both produce Go field %q", origin, prev, prop, field)
+			}
+			seenBodyFields[field] = prop
+		}
+	}
 	// Every $ref name is interpolated by schemaToGoType / bodyTypeName as a
 	// raw Go identifier (via toGoName(spec.RefName(ref))). The loops above only
 	// see component names; a $ref string with a malformed target (typo, or a
