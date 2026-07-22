@@ -11,6 +11,9 @@
 # Test binary, built with `go test -c`
 *.test
 
+# Build output (Makefile `build` target writes the yaggo binary here)
+/bin/
+
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*

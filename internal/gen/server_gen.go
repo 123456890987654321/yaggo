@@ -4,11 +4,17 @@ import (
 	"io"
 	"strings"
 
-	"github.com/123456890987654321/yago/internal/spec"
+	"github.com/123456890987654321/yaggo/internal/spec"
 )
 
 // GenerateServer writes the server interface + chi handler registration file.
 func GenerateServer(w io.Writer, api *spec.OpenAPI, pkg string) error {
+	if err := validateSpecIdentifiers(api); err != nil {
+		return err
+	}
+	if err := validateSpecPatterns(api); err != nil {
+		return err
+	}
 	return templates.ExecuteTemplate(w, "server.go.tmpl", buildTmplData(api, pkg))
 }
 
@@ -16,7 +22,7 @@ func GenerateServer(w io.Writer, api *spec.OpenAPI, pkg string) error {
 // to a named component schema, that name is used; otherwise an inline "<OpName>Body"
 // type is emitted by GenerateBodyTypes.
 func bodyTypeName(opName string, mo MethodOp, _ *spec.OpenAPI) string {
-	bs := requestBodySchema(mo.Op)
+	_, bs := requestBodyContent(mo.Op)
 	if bs == nil {
 		return "any"
 	}

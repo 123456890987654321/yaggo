@@ -6,26 +6,33 @@ import (
 	"go/format"
 	"testing"
 
-	"github.com/123456890987654321/yago/internal/spec"
+	"github.com/123456890987654321/yaggo/internal/spec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateBodyTypesMixedInlineAndRefBodies(t *testing.T) {
 	// One inline body triggers emission, one $ref body must be skipped silently.
-	api := &spec.OpenAPI{Paths: map[string]spec.PathItem{
-		"/a": {Post: &spec.Operation{
-			OperationID: "aPost",
-			RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-				"application/json": {Schema: &spec.Schema{Type: "object", Properties: map[string]*spec.Schema{"x": {Type: "string"}}}},
-			}},
+	// The Other schema is registered as a component so the ref resolves —
+	// validateSchemaRefs would otherwise reject the dangling target.
+	api := &spec.OpenAPI{
+		Components: spec.Components{Schemas: map[string]*spec.Schema{
+			"Other": {Type: spec.SchemaType{"object"}},
 		}},
-		"/b": {Post: &spec.Operation{
-			OperationID: "bPost",
-			RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-				"application/json": {Schema: &spec.Schema{Ref: "#/components/schemas/Other"}},
+		Paths: map[string]spec.PathItem{
+			"/a": {Post: &spec.Operation{
+				OperationID: "aPost",
+				RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+					"application/json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}, Properties: map[string]*spec.Schema{"x": {Type: spec.SchemaType{"string"}}}}},
+				}},
 			}},
-		}},
-	}}
+			"/b": {Post: &spec.Operation{
+				OperationID: "bPost",
+				RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+					"application/json": {Schema: &spec.Schema{Ref: "#/components/schemas/Other"}},
+				}},
+			}},
+		},
+	}
 	var buf bytes.Buffer
 	require.NoError(t, GenerateBodyTypes(&buf, api, "p"))
 	formatted, err := format.Source(buf.Bytes())
@@ -38,7 +45,7 @@ func TestGenerateBodyTypesMixedInlineAndRefBodies(t *testing.T) {
 func TestGenerateBodyTypesAllOfInlineBody(t *testing.T) {
 	api := &spec.OpenAPI{
 		Components: spec.Components{Schemas: map[string]*spec.Schema{
-			"Base": {Type: "object", Properties: map[string]*spec.Schema{"id": {Type: "integer"}}},
+			"Base": {Type: spec.SchemaType{"object"}, Properties: map[string]*spec.Schema{"id": {Type: spec.SchemaType{"integer"}}}},
 		}},
 		Paths: map[string]spec.PathItem{
 			"/x": {Post: &spec.Operation{
@@ -46,7 +53,7 @@ func TestGenerateBodyTypesAllOfInlineBody(t *testing.T) {
 				RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
 					"application/json": {Schema: &spec.Schema{AllOf: []*spec.Schema{
 						{Ref: "#/components/schemas/Base"},
-						{Type: "object", Properties: map[string]*spec.Schema{"name": {Type: "string"}}},
+						{Type: spec.SchemaType{"object"}, Properties: map[string]*spec.Schema{"name": {Type: spec.SchemaType{"string"}}}},
 					}}},
 				}},
 			}},
@@ -68,10 +75,10 @@ func TestGenerateBodyTypesEmitsForInlineBodies(t *testing.T) {
 			OperationID: "doX",
 			RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
 				"application/json": {Schema: &spec.Schema{
-					Type:     "object",
+					Type:     spec.SchemaType{"object"},
 					Required: []string{"name"},
 					Properties: map[string]*spec.Schema{
-						"name": {Type: "string"},
+						"name": {Type: spec.SchemaType{"string"}},
 					},
 				}},
 			}},
@@ -87,15 +94,20 @@ func TestGenerateBodyTypesEmitsForInlineBodies(t *testing.T) {
 }
 
 func TestGenerateBodyTypesNoBodiesEmitsNothing(t *testing.T) {
-	api := &spec.OpenAPI{Paths: map[string]spec.PathItem{
-		"/refonly": {Post: &spec.Operation{
-			OperationID: "refOnly",
-			RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-				"application/json": {Schema: &spec.Schema{Ref: "#/components/schemas/Pet"}},
-			}},
+	api := &spec.OpenAPI{
+		Components: spec.Components{Schemas: map[string]*spec.Schema{
+			"Pet": {Type: spec.SchemaType{"object"}},
 		}},
-		"/getonly": {Get: &spec.Operation{OperationID: "noBody"}},
-	}}
+		Paths: map[string]spec.PathItem{
+			"/refonly": {Post: &spec.Operation{
+				OperationID: "refOnly",
+				RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
+					"application/json": {Schema: &spec.Schema{Ref: "#/components/schemas/Pet"}},
+				}},
+			}},
+			"/getonly": {Get: &spec.Operation{OperationID: "noBody"}},
+		},
+	}
 	var buf bytes.Buffer
 	require.NoError(t, GenerateBodyTypes(&buf, api, "p"))
 	require.Empty(t, buf.Bytes(), "expected no output when all bodies are $refs")
@@ -106,7 +118,7 @@ func TestGenerateBodyTypesPropagatesWriterError(t *testing.T) {
 		"/x": {Post: &spec.Operation{
 			OperationID: "doX",
 			RequestBody: &spec.RequestBody{Content: map[string]spec.MediaType{
-				"application/json": {Schema: &spec.Schema{Type: "object", Properties: map[string]*spec.Schema{"a": {Type: "string"}}}},
+				"application/json": {Schema: &spec.Schema{Type: spec.SchemaType{"object"}, Properties: map[string]*spec.Schema{"a": {Type: spec.SchemaType{"string"}}}}},
 			}},
 		}},
 	}}
